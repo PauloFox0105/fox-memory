@@ -1,0 +1,11 @@
+services:
+  fox-memory:
+    build: .
+    container_name: fox-memory
+    restart: unless-stopped
+    ports:
+      - "18820:18810"
+    volumes:
+      - ./memory.db:/app/memory.db
+    environment:
+      - FOXMEMORY_API_KEY=${FOXMEMORY_API_KEY:-change_me_in_production}
