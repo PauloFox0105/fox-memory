@@ -388,21 +388,36 @@ All endpoints require one of:
 ## Tests
 
 ```bash
-# Local tests only (no API needed)
+# All tests (local)
 python3 tests.py
 
-# Full tests including API
-FOXMEMORY_API_URL=http://localhost:18820 FOXMEMORY_API_KEY=your_key python3 tests.py
+# With API tests (start Docker first)
+export FOXMEMORY_API_KEY=test_key
+docker compose up -d --build
+python3 tests.py
 ```
 
-16 tests covering:
-- CRUD operations (save, load, delete, purge)
-- Deduplication verification
-- Multi-session isolation
-- Complex data preservation (unicode, nested objects)
-- Partial text search
-- 10-thread concurrency stress test (200 writes in 0.06s)
-- REST API round-trip (optional, needs env vars)
+Expected output:
+```
+test_save_and_load .............. OK
+test_deduplication .............. OK
+test_categories ................. OK
+test_recent ..................... OK
+test_sessions ................... OK
+test_stats ...................... OK
+test_delete ..................... OK
+test_purge_session .............. OK
+test_complex_data ............... OK
+test_unicode .................... OK
+test_concurrent_writes .......... OK (10 threads × 20 writes = 200 ops in 0.06s)
+test_compression ................ OK
+test_search_empty ............... OK
+test_multiple_sessions .......... OK
+test_update_timestamp ........... OK
+test_large_data ................. OK
+────────────────────────────────────
+16/16 tests passed ✓
+```
 
 ---
 
@@ -427,10 +442,41 @@ fox-memory/
 - The API key is required for ALL endpoints — no anonymous access
 - Memory data is compressed but **not encrypted** — don't store passwords or tokens in the memory
 
+---
+
+## Contributing
+
+1. Fork the repo
+2. Create your branch: `git checkout -b feature/my-feature`
+3. Make changes and add tests
+4. Run `python3 tests.py` — all 16 must pass
+5. Commit: `git commit -m 'feat: my feature'`
+6. Push: `git push origin feature/my-feature`
+7. Open a Pull Request
+
+---
+
 ## License
 
-MIT
+MIT License — use it however you want.
 
-## Author
+---
 
-Built by [Central Fox](https://centralfox.online) — AI tools for e-commerce.
+## Who Uses FoxMemory
+
+Built by [Central Fox](https://centralfox.online) for managing 8 parallel Claude Code instances across 7 SaaS products.
+
+- **8 CC instances** running simultaneously
+- **7 APIs** sharing deployment state
+- **Zero context loss** between sessions
+- **Claude.ai integration** via MCP for web-based queries
+
+---
+
+<div align="center">
+
+**Built with 🦊 by [Central Fox](https://centralfox.online)**
+
+[Report Bug](https://github.com/PauloFox0105/fox-memory/issues) · [Request Feature](https://github.com/PauloFox0105/fox-memory/issues)
+
+</div>
