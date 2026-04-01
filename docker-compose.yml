@@ -9,3 +9,16 @@ services:
       - ./memory.db:/app/memory.db
     env_file:
       - .env
+
+  fox-memory-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: fox-memory-mcp
+    restart: unless-stopped
+    ports:
+      - "18821:18821"
+    env_file:
+      - .env
+    depends_on:
+      - fox-memory

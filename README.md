@@ -2,48 +2,49 @@
 
 Encrypted shared memory for multiple Claude Code instances + Claude.ai.
 
-**10 CCs running in parallel? All sharing one brain. E2E encrypted. Zero context lost.**
+**10 CCs in parallel, one shared brain, E2E encrypted, zero context lost.**
 
 ## Architecture
 
 ```
 CC1  ──┐
-CC2  ──┤                                    ┌── SQLite local
-CC3  ──┤── memory_bridge.py v3 ──┬── save ──┤   (plaintext, fast)
-...    ┤   (AES-256-GCM)         │          └── REST API (encrypted)
-CC10 ──┘                         │                    ↑
-                                 │              HTTPS + TLS
-                                 │                    │
-Claude.ai ────── MCP ────────────┘     https://your-domain.com
+CC2  ──┤
+CC3  ──┤── memory_bridge.py ──┬── SQLite local (plaintext, fast)
+...    ┤   (dual-write)       └── REST API (AES-256-GCM encrypted)
+CC10 ──┘                               ↑
+                                   HTTPS + TLS
+                                        │
+                              ┌─────────┴─────────┐
+                              │  MCP Server (OAuth) │
+                              └─────────┬─────────┘
+                                        │
+Claude.ai (web) ─── MCP Protocol ──────┘
 ```
 
 ## Features
 
-- **E2E Encryption**: AES-256-GCM — data encrypted before leaving the machine
-- **Dual-write**: local SQLite + remote REST API (automatic sync)
-- **Thread-safe**: SQLite WAL mode — 10+ concurrent writers, zero conflicts
-- **Deduplication**: SHA256 hash prevents duplicate entries
-- **Compression**: zlib level 6 on local storage (3-5x ratio)
-- **Backward compatible**: reads both encrypted and plaintext records
-- **Zero core dependencies**: pure Python stdlib for local engine
-- **18 tests**: including concurrency stress test and E2E round-trip
+- **E2E Encryption** — AES-256-GCM, data encrypted before leaving your machine
+- **Dual-write** — local SQLite + remote REST API (automatic sync)
+- **MCP Server** — Claude.ai connects via OAuth + PKCE (9 tools)
+- **Thread-safe** — SQLite WAL mode, 10+ concurrent writers
+- **Deduplication** — SHA256 hash prevents duplicates
+- **Compression** — zlib on local storage (3-5x ratio)
+- **18 tests** — including concurrency stress and E2E round-trip
 
 ---
 
 ## Quick Start
 
-### 1. Clone and install locally
+### 1. Install locally
 
 ```bash
 git clone https://github.com/PauloFox0105/fox-memory.git
 cd fox-memory
-
-# Copy engine to shared location
 mkdir -p ~/.claude-shared-memory
 cp memory_bridge.py ~/.claude-shared-memory/
 ```
 
-### 2. Generate encryption key (optional but recommended)
+### 2. Generate encryption key
 
 ```bash
 python3 -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())" \
@@ -59,69 +60,39 @@ sys.path.insert(0, os.path.expanduser("~/.claude-shared-memory"))
 from memory_bridge import Memory
 
 mem = Memory(session_id="cc-01")
-
-# Save
 mem.save("deploy", "my-app", {"status": "live", "commit": "abc123"})
-
-# Search
 mem.load("my-app")
-mem.load("", categoria="deploy")
-
-# Recent
 mem.recent(limit=10)
-mem.recent(limit=5, session_id="cc-02")
-
-# Info
 mem.sessions()
 mem.stats()
 ```
 
+### 4. Enable remote sync
+
+```bash
+export FOXMEMORY_API_URL=https://your-server.com
+export FOXMEMORY_API_KEY=your_api_key
+```
+
+Every `mem.save()` now writes locally AND pushes encrypted data to the remote API.
+
 ---
 
-## Remote API (Docker)
-
-Deploy the REST API for remote access and Claude.ai integration.
-
-### Setup
+## Deploy REST API (Docker)
 
 ```bash
 cd fox-memory
+cp .env.example .env
+# Edit .env with your API key and decrypt key
 
-# Generate API key
-export FOXMEMORY_API_KEY=$(python3 -c "import secrets; print('foxmem_' + secrets.token_hex(32))")
-
-# Generate decrypt key (same as your .master_key, for server-side decryption)
-export FOXMEMORY_DECRYPT_KEY=$(cat ~/.claude-shared-memory/.master_key)
-
-# Create .env
-cat > .env << EOF
-FOXMEMORY_API_KEY=$FOXMEMORY_API_KEY
-FOXMEMORY_DECRYPT_KEY=$FOXMEMORY_DECRYPT_KEY
-EOF
-
-# Build and run
 docker compose up -d --build
-
-# Verify
-curl -H "X-Api-Key: $FOXMEMORY_API_KEY" http://localhost:18820/health
+# REST API: http://localhost:18820
+# MCP Server: http://localhost:18821
 ```
 
-### Enable remote sync in memory_bridge
+### API Endpoints
 
-Set environment variables for your CC instances:
-
-```bash
-export FOXMEMORY_API_URL=https://your-domain.com  # or http://your-ip:18820
-export FOXMEMORY_API_KEY=your_api_key_here
-```
-
-Every `mem.save()` will now write locally AND push encrypted data to the remote API.
-
----
-
-## API Endpoints
-
-All endpoints require `X-Api-Key` header.
+All require `X-Api-Key` header.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -133,68 +104,97 @@ All endpoints require `X-Api-Key` header.
 | `GET` | `/memory/stats` | Database stats |
 | `DELETE` | `/memory/{id}` | Delete by ID |
 
-### E2E Decryption
-
-Add `X-Decrypt-Key` header to decrypt data on read:
+### E2E Decrypt on read
 
 ```bash
-# Without decrypt key → encrypted blobs
+# Without X-Decrypt-Key → encrypted blobs
 curl -H "X-Api-Key: $KEY" "$URL/memory/recent"
-# {"dados": {"_e2e": "E2E:Zg6j..."}}
 
-# With decrypt key → plaintext data
-curl -H "X-Api-Key: $KEY" -H "X-Decrypt-Key: $DECRYPT_KEY" "$URL/memory/recent"
-# {"dados": {"status": "live", "commit": "abc123"}}
+# With X-Decrypt-Key → plaintext
+curl -H "X-Api-Key: $KEY" -H "X-Decrypt-Key: $MASTER_KEY" "$URL/memory/recent"
 ```
-
-### Save Request
-
-```json
-{
-  "session_id": "cc-01",
-  "categoria": "deploy",
-  "contexto": "my-app",
-  "dados": {"status": "live"}
-}
-```
-
-### Authentication
-
-- `X-Api-Key: your_key`
-- `Authorization: Bearer your_key`
 
 ---
 
-## Claude.ai MCP Setup
+## Connect Claude.ai (MCP)
 
-1. Deploy the API with HTTPS on a public domain
-2. Go to **Claude.ai > Settings > MCP Servers > Add**
-3. Configure:
-   - **URL**: `https://your-domain.com`
-   - **X-Api-Key**: your API key
-   - **X-Decrypt-Key**: your master key (for reading decrypted data)
+The MCP server implements OAuth 2.0 + PKCE for secure Claude.ai integration.
+
+### 1. Deploy with HTTPS
+
+The MCP server needs a public HTTPS domain. Set up nginx reverse proxy:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name mcp.your-domain.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:18821;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+### 2. Configure environment
+
+```bash
+# In .env
+MCP_PUBLIC_URL=https://mcp.your-domain.com
+FOXMEMORY_API_URL=http://fox-memory:18810   # internal Docker network
+FOXMEMORY_API_KEY=your_api_key
+FOXMEMORY_DECRYPT_KEY=your_master_key       # for server-side decrypt
+```
+
+### 3. Add allowed hosts
+
+Edit `mcp_server.py` and add your domain to `allowed_hosts` in `TransportSecuritySettings`.
+
+### 4. Connect in Claude.ai
+
+1. **Claude.ai → Settings → Integrations → Add**
+2. **URL:** `https://mcp.your-domain.com/mcp`
+3. Leave Client ID/Secret blank (dynamic registration)
+4. Authorize in popup
+
+### Available MCP Tools (9)
+
+| Tool | Description |
+|------|-------------|
+| `memory_search` | Search memories by text/category |
+| `memory_recent` | Get last N memories |
+| `memory_save` | Save a memory |
+| `memory_delete` | Delete memory by ID |
+| `memory_sessions` | List active CC sessions |
+| `memory_stats` | Database statistics |
+| `foxshield_project_status` | Project status across CCs |
+| `vps_health` | Server health (containers, RAM, disk) |
+| `cc_activity` | Activity summary grouped by CC |
 
 ---
 
 ## Security
 
-### 6 layers of protection
-
 | Layer | Protection |
 |-------|-----------|
 | **E2E Encryption** | AES-256-GCM — server stores only ciphertext |
-| **API Key** | 256-bit key required for all endpoints |
+| **API Key** | 256-bit key for all REST endpoints |
+| **OAuth + PKCE** | MCP server uses OAuth 2.0 with PKCE for Claude.ai |
 | **HTTPS** | TLS encryption in transit |
 | **Rate Limiting** | nginx: 10 req/s per IP |
 | **Fail2ban** | Auto-ban after 5 failed auth attempts |
-| **Path Blocking** | Common attack paths return 444 |
 
-### Key management
+### Key files (never commit these)
 
-- **`.master_key`**: 256-bit AES key, lives ONLY on your local machine
-- **`.env`**: API key + decrypt key, lives ONLY on the server
-- **`.gitignore`**: excludes `.env`, `.master_key`, `*.db`
-- Never commit secrets — generate fresh keys per deployment
+- `.master_key` — AES-256 encryption key (local only)
+- `.env` — API keys and secrets (server only)
 
 ---
 
@@ -203,20 +203,22 @@ curl -H "X-Api-Key: $KEY" -H "X-Decrypt-Key: $DECRYPT_KEY" "$URL/memory/recent"
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `FOXMEMORY_API_URL` | Remote API URL for sync | _(empty = no sync)_ |
-| `FOXMEMORY_API_KEY` | API authentication key | _(required for API)_ |
-| `FOXMEMORY_DECRYPT_KEY` | Master key for server-side decrypt | _(empty = no decrypt)_ |
-| `FOXMEMORY_REMOTE_SYNC` | Enable remote sync (`1`/`0`) | `1` |
-| `FOXMEMORY_E2E` | Enable E2E encryption (`1`/`0`) | `1` |
+| `FOXMEMORY_API_KEY` | API authentication key | _(required)_ |
+| `FOXMEMORY_DECRYPT_KEY` | Master key for server-side decrypt | _(empty)_ |
+| `FOXMEMORY_REMOTE_SYNC` | Enable remote sync | `1` |
+| `FOXMEMORY_E2E` | Enable E2E encryption | `1` |
+| `MCP_PUBLIC_URL` | Public URL for OAuth issuer | `http://localhost:18821` |
+| `MCP_PORT` | MCP server port | `18821` |
 
 ---
 
 ## Tests
 
 ```bash
-# Local tests (16 tests)
+# Local (16 tests)
 python3 tests.py
 
-# With API tests (18 tests)
+# With API (18 tests)
 FOXMEMORY_API_URL=http://localhost:18820 FOXMEMORY_API_KEY=your_key python3 tests.py
 ```
 
@@ -226,29 +228,17 @@ FOXMEMORY_API_URL=http://localhost:18820 FOXMEMORY_API_KEY=your_key python3 test
 
 ```
 fox-memory/
-  memory_bridge.py    # Core engine (v3.0 — dual-write + E2E)
-  api.py              # REST API (v2.0 — E2E decrypt support)
-  tests.py            # Test suite (18 tests)
-  Dockerfile          # Container image (Python 3.11 + cryptography)
-  docker-compose.yml  # Docker deployment (env_file based)
+  memory_bridge.py    # Core engine (v3 — dual-write + E2E)
+  api.py              # REST API (v2 — E2E decrypt support)
+  mcp_server.py       # MCP server (v3 — OAuth + PKCE + 9 tools)
+  run_mcp.py          # MCP runner with OAuth metadata patch
+  tests.py            # 18 tests
+  Dockerfile          # REST API container
+  Dockerfile.mcp      # MCP server container
+  docker-compose.yml  # Both services
   .env.example        # Environment template
-  .gitignore          # Excludes .env, .master_key, *.db
   LICENSE             # MIT
 ```
-
----
-
-## Categories
-
-| Category | When to use |
-|----------|-------------|
-| `deploy` | After deploying an app or service |
-| `dns` | After DNS record changes |
-| `build` | Build results (pass/fail) |
-| `test` | Test suite results |
-| `api` | API configurations |
-| `error` | Errors other instances should know about |
-| `config` | Infrastructure changes |
 
 ---
 

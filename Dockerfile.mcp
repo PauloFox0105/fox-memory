@@ -1,0 +1,6 @@
+FROM python:3.11-slim
+WORKDIR /app
+RUN pip install --no-cache-dir fastapi uvicorn cryptography mcp httpx
+COPY memory_bridge.py mcp_server.py run_mcp.py ./
+EXPOSE 18821
+CMD ["python3", "run_mcp.py"]
