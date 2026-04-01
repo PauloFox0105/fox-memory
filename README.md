@@ -2,9 +2,11 @@
 
 Shared persistent memory system for multiple Claude Code instances + Claude.ai (via MCP).
 
+**10 Claude Codes running in parallel? All sharing the same brain. Zero context lost.**
+
 ## The Problem
 
-When you run multiple Claude Code instances in parallel, each one starts fresh with no context about what the others did. If CC1 deployed FoxReply and CC2 needs to check its status, CC2 has no way to know. Same with Claude.ai — every new chat is a blank slate.
+When you run multiple Claude Code instances in parallel, each one starts fresh with no context about what the others did. If CC1 deployed your app and CC2 needs to check its status, CC2 has no way to know. Same with Claude.ai — every new chat is a blank slate.
 
 ## The Solution
 
@@ -29,81 +31,44 @@ Claude.ai (web) ────── MCP Server ─────────┘
 - **Zero dependencies**: Pure Python stdlib (no pip install needed for the core)
 - **REST API**: FastAPI server for remote access + Claude.ai MCP integration
 - **CLI**: Command-line interface for quick queries
+- **Unlimited duration**: Memories never expire. What you saved today will be there in years
 - **Tested**: 16 tests including 10-thread concurrency stress test
 
-## Quick Start
+---
 
-### 1. Local Setup (Claude Code instances on same machine)
+## Complete Setup Guide (Step by Step)
+
+### Step 1: Clone the repo
 
 ```bash
+git clone https://github.com/PauloFox0105/fox-memory.git
+cd fox-memory
+```
+
+### Step 2: Install locally (for Claude Code instances on the same machine)
+
+```bash
+# Create the shared memory directory
 mkdir -p ~/.claude-shared-memory
+
+# Copy the engine
 cp memory_bridge.py ~/.claude-shared-memory/
+
+# Test it works
+python3 ~/.claude-shared-memory/memory_bridge.py stats
 ```
 
-Use in any Claude Code instance:
+That's it. Every Claude Code instance on this machine can now share memory.
 
-```python
-import sys, os
-sys.path.insert(0, os.path.expanduser("~/.claude-shared-memory"))
-from memory_bridge import Memory
+### Step 3: Create the Claude Code Skill
 
-mem = Memory(session_id="cc-01")
-
-# Save
-mem.save("deploy", "my-app", {"status": "live", "url": "https://myapp.com"})
-
-# Search
-results = mem.load("my-app")
-
-# Recent (all instances)
-mem.recent(limit=10)
-
-# Stats
-mem.stats()
-```
-
-### 2. Remote Setup (API + Docker)
-
-For multiple machines or Claude.ai access:
+This tells Claude Code HOW and WHEN to use the memory automatically.
 
 ```bash
-# Set your API key
-export FOXMEMORY_API_KEY=your_secret_key_here
-
-# Run with Docker
-docker compose up -d --build
+mkdir -p ~/.claude/skills
 ```
 
-API endpoints:
-
-```bash
-# Health check
-curl -H "X-Api-Key: $KEY" http://localhost:18820/health
-
-# Save memory
-curl -X POST -H "X-Api-Key: $KEY" -H "Content-Type: application/json" \
-  http://localhost:18820/memory/save \
-  -d '{"session_id": "cc-01", "categoria": "deploy", "contexto": "my-app", "dados": {"status": "live"}}'
-
-# Search
-curl -H "X-Api-Key: $KEY" "http://localhost:18820/memory/search?q=my-app"
-
-# Recent
-curl -H "X-Api-Key: $KEY" "http://localhost:18820/memory/recent?limit=5"
-
-# Stats
-curl -H "X-Api-Key: $KEY" http://localhost:18820/memory/stats
-
-# Sessions (which instances are active)
-curl -H "X-Api-Key: $KEY" http://localhost:18820/memory/sessions
-
-# Delete
-curl -X DELETE -H "X-Api-Key: $KEY" http://localhost:18820/memory/42
-```
-
-### 3. Claude Code Skill
-
-Create `~/.claude/skills/shared-memory.md`:
+Create `~/.claude/skills/shared-memory.md` with this content:
 
 ```markdown
 ---
@@ -113,74 +78,253 @@ description: Shared memory between CC instances. Use to persist state and share 
 
 # Shared Memory
 
-Before any task, check what other CCs did:
-\```python
+Before any important task, check what other CCs did:
+
 import sys, os
 sys.path.insert(0, os.path.expanduser("~/.claude-shared-memory"))
 from memory_bridge import Memory
-mem = Memory(session_id="cc-01")
+mem = Memory(session_id="cc-01")  # change number per instance
 print(mem.recent(limit=5))
-\```
 
-After completing important work, save it:
-\```python
+After completing important work (deploy, DNS, build, test), save it:
+
 mem.save("deploy", "project-name", {"status": "live", "commit": "abc123"})
-\```
 
 Categories: deploy, dns, build, test, api, error, config
 ```
 
-### 4. Connect Claude.ai via MCP
+Now every Claude Code instance will automatically check and save to shared memory.
 
-Once the API is running, register it as an MCP server in Claude.ai:
+### Step 4: Deploy the REST API (for remote access + Claude.ai)
 
-1. Go to Claude.ai > Settings > MCP Servers
-2. Add new server with your API URL
-3. Claude.ai can now query and save to the shared memory
+This step is **optional** — only needed if you want:
+- Multiple machines sharing memory
+- Claude.ai (web) to access the memory
+- Remote access to the memory database
 
-## API Reference
+#### Option A: Deploy with Docker (recommended)
 
-### Python API
+```bash
+cd fox-memory
 
-```python
-mem = Memory(session_id="my-instance")
+# Create your API key (use any secure string)
+export FOXMEMORY_API_KEY=$(python3 -c "import secrets; print('foxmem_' + secrets.token_hex(24))")
+echo "Your API key: $FOXMEMORY_API_KEY"
+echo "SAVE THIS KEY — you'll need it for all API calls"
 
-# Save — returns memory ID
-mem.save(categoria, contexto, dados_dict) -> int
+# Create .env file
+echo "FOXMEMORY_API_KEY=$FOXMEMORY_API_KEY" > .env
 
-# Search — by text (context or category)
-mem.load(query, categoria=None, limit=20) -> list[dict]
-
-# Recent — last N memories
-mem.recent(limit=10, session_id=None) -> list[dict]
-
-# Sessions — list all active instances
-mem.sessions() -> list[dict]
-
-# Stats — database statistics
-mem.stats() -> dict
-
-# Delete — by ID
-mem.delete(memory_id) -> bool
-
-# Purge — remove all memories from a session
-mem.purge_session(session_id) -> int
+# Build and run
+docker compose up -d --build
 ```
 
-### Categories
+#### Option B: Deploy on a VPS (for always-on access)
 
-Use consistent categories for better search:
+```bash
+# On your VPS
+mkdir -p ~/fox-memory
+cd ~/fox-memory
 
-| Category | When to use |
-|----------|-------------|
-| `deploy` | After deploying an app, container, or service |
-| `dns` | After creating/changing DNS records |
-| `build` | After build results (pass/fail) |
-| `test` | After running test suites |
-| `api` | API configurations, keys, endpoints |
-| `error` | Errors that other instances should know about |
-| `config` | Infrastructure or app configuration changes |
-| `lead` | Business leads, customer data |
+# Copy files (or git clone)
+git clone https://github.com/PauloFox0105/fox-memory.git .
+
+# Generate API key
+export FOXMEMORY_API_KEY=$(python3 -c "import secrets; print('foxmem_' + secrets.token_hex(24))")
+
+# Create .env
+echo "FOXMEMORY_API_KEY=$FOXMEMORY_API_KEY" > .env
+
+# Build and run
+docker compose up -d --build
+
+# Verify
+curl -s -H "X-Api-Key: $FOXMEMORY_API_KEY" http://localhost:18820/health
+# Should return: {"status":"ok","engine":"FoxMemory v1.0",...}
+```
+
+#### Option C: Run without Docker
+
+```bash
+# Install dependencies
+pip install fastapi uvicorn
+
+# Set API key
+export FOXMEMORY_API_KEY=your_secret_key_here
+
+# Run
+cd fox-memory
+uvicorn api:app --host 0.0.0.0 --port 18820
+```
+
+### Step 5: Test everything
+
+```bash
+# Run the test suite (local tests only)
+python3 tests.py
+
+# Run with API tests included
+export FOXMEMORY_API_URL=http://localhost:18820  # or your VPS IP
+export FOXMEMORY_API_KEY=your_key_here
+python3 tests.py
+```
+
+Expected output:
+```
+  [01] Save basico... OK
+  [02] Load por contexto... OK
+  ...
+  [14] Concorrencia 10 threads x 20 writes... OK (0.07s, 200 writes, 0 errors)
+  [15] API REST health check... OK
+  [16] API REST save + search round-trip... OK
+
+  RESULTADO: 16/16 passed — ALL PASSED
+```
+
+### Step 6: Connect Claude.ai via MCP (optional)
+
+Once the API is running on a publicly accessible server:
+
+1. Go to **Claude.ai > Settings > MCP Servers**
+2. Add a new server:
+   - Name: `FoxMemory`
+   - URL: `http://your-server-ip:18820`
+   - Authentication: API Key header `X-Api-Key`
+3. Claude.ai can now query and save to the shared memory
+
+---
+
+## How to Use
+
+### Python API (inside Claude Code)
+
+```python
+import sys, os
+sys.path.insert(0, os.path.expanduser("~/.claude-shared-memory"))
+from memory_bridge import Memory
+
+mem = Memory(session_id="cc-01")
+
+# ── SAVE ──
+# After a deploy
+mem.save("deploy", "my-app", {
+    "status": "live",
+    "commit": "abc123",
+    "url": "https://myapp.com",
+    "health": 200
+})
+
+# After changing DNS
+mem.save("dns", "myapp-dns", {
+    "type": "A",
+    "subdomain": "api.myapp",
+    "ip": "1.2.3.4"
+})
+
+# After running tests
+mem.save("test", "my-app-tests", {
+    "passed": 47,
+    "failed": 0,
+    "duration": "12s"
+})
+
+# ── SEARCH ──
+mem.load("my-app")              # search by text (context or category)
+mem.load("", categoria="deploy")  # search by category only
+
+# ── RECENT ──
+mem.recent(limit=10)                        # last 10 from ALL instances
+mem.recent(limit=5, session_id="cc-02")     # last 5 from CC2 only
+
+# ── INFO ──
+mem.sessions()  # which instances are active
+mem.stats()     # total memories, categories, db size
+
+# ── DELETE ──
+mem.delete(42)                  # delete memory by ID
+mem.purge_session("cc-old")     # delete all from a session
+```
+
+### REST API (via curl)
+
+All endpoints require the `X-Api-Key` header.
+
+```bash
+KEY="your_api_key_here"
+URL="http://your-server:18820"
+
+# Health check
+curl -H "X-Api-Key: $KEY" $URL/health
+
+# Save a memory
+curl -X POST -H "X-Api-Key: $KEY" -H "Content-Type: application/json" \
+  $URL/memory/save \
+  -d '{
+    "session_id": "cc-01",
+    "categoria": "deploy",
+    "contexto": "my-app",
+    "dados": {"status": "live", "commit": "abc123"}
+  }'
+
+# Search memories
+curl -H "X-Api-Key: $KEY" "$URL/memory/search?q=my-app"
+
+# Search by category
+curl -H "X-Api-Key: $KEY" "$URL/memory/search?q=&categoria=deploy"
+
+# Get recent memories
+curl -H "X-Api-Key: $KEY" "$URL/memory/recent?limit=5"
+
+# Get recent from specific session
+curl -H "X-Api-Key: $KEY" "$URL/memory/recent?limit=5&session_id=cc-01"
+
+# List active sessions
+curl -H "X-Api-Key: $KEY" $URL/memory/sessions
+
+# Database stats
+curl -H "X-Api-Key: $KEY" $URL/memory/stats
+
+# Delete a memory by ID
+curl -X DELETE -H "X-Api-Key: $KEY" $URL/memory/42
+```
+
+### CLI (command line)
+
+```bash
+# Show database stats
+python3 memory_bridge.py stats
+
+# Show recent memories
+python3 memory_bridge.py recent 10
+
+# Search memories
+python3 memory_bridge.py search "my-app"
+
+# List sessions
+python3 memory_bridge.py sessions
+
+# Save from command line
+python3 memory_bridge.py save deploy my-app '{"status": "live"}'
+```
+
+---
+
+## Categories
+
+Use consistent categories so all instances can find each other's work:
+
+| Category | When to use | Example |
+|----------|-------------|---------|
+| `deploy` | After deploying an app, container, or service | `{"status": "live", "commit": "abc123"}` |
+| `dns` | After creating/changing DNS records | `{"type": "A", "ip": "1.2.3.4"}` |
+| `build` | After build results (pass/fail) | `{"passed": true, "duration": "31s"}` |
+| `test` | After running test suites | `{"passed": 47, "failed": 0}` |
+| `api` | API configurations, endpoints | `{"url": "https://api.myapp.com"}` |
+| `error` | Errors that other instances should know about | `{"error": "DB connection failed"}` |
+| `config` | Infrastructure or app configuration changes | `{"nginx": "updated", "ssl": true}` |
+| `lead` | Business leads, customer data | `{"total": 11, "source": "csv"}` |
+
+---
 
 ## Architecture
 
@@ -203,19 +347,64 @@ All data is serialized to JSON, then compressed with zlib (level 6) before stora
 
 Each memory gets a SHA256 hash of `categoria:contexto:dados`. If you save the exact same data twice, it updates the timestamp instead of creating a duplicate.
 
+### Memory Duration
+
+**Unlimited.** SQLite doesn't expire data. The database file only grows as you use it. 10,000 memories = ~5 MB. You can delete old memories manually with `mem.delete(id)` or `mem.purge_session(session_id)`.
+
+---
+
+## API Endpoints Reference
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `GET` | `/health` | Server status + memory count | Required |
+| `GET` | `/memory/recent?limit=10` | Last N memories | Required |
+| `GET` | `/memory/search?q=text` | Search by text | Required |
+| `GET` | `/memory/search?q=&categoria=deploy` | Search by category | Required |
+| `POST` | `/memory/save` | Save new memory | Required |
+| `GET` | `/memory/sessions` | List active sessions | Required |
+| `GET` | `/memory/stats` | Database statistics | Required |
+| `DELETE` | `/memory/{id}` | Delete memory by ID | Required |
+
+### Save Request Body
+
+```json
+{
+  "session_id": "cc-01",
+  "categoria": "deploy",
+  "contexto": "my-app",
+  "dados": {"any": "json", "object": true}
+}
+```
+
+### Authentication
+
+All endpoints require one of:
+- Header: `X-Api-Key: your_key`
+- Header: `Authorization: Bearer your_key`
+
+---
+
 ## Tests
 
 ```bash
+# Local tests only (no API needed)
 python3 tests.py
+
+# Full tests including API
+FOXMEMORY_API_URL=http://localhost:18820 FOXMEMORY_API_KEY=your_key python3 tests.py
 ```
 
-Runs 16 tests:
+16 tests covering:
 - CRUD operations (save, load, delete, purge)
 - Deduplication verification
 - Multi-session isolation
 - Complex data preservation (unicode, nested objects)
-- 10-thread concurrency stress test (200 writes)
-- REST API round-trip (if server is running)
+- Partial text search
+- 10-thread concurrency stress test (200 writes in 0.06s)
+- REST API round-trip (optional, needs env vars)
+
+---
 
 ## Files
 
@@ -226,8 +415,17 @@ fox-memory/
   tests.py            # Test suite (16 tests)
   Dockerfile          # Container image
   docker-compose.yml  # Docker deployment
+  .env.example        # Environment variables template
   README.md           # This file
 ```
+
+## Security Notes
+
+- **Never commit your `.env` file** — it contains your API key
+- The `.gitignore` already excludes `.env` and `*.db` files
+- Generate a strong API key: `python3 -c "import secrets; print('foxmem_' + secrets.token_hex(24))"`
+- The API key is required for ALL endpoints — no anonymous access
+- Memory data is compressed but **not encrypted** — don't store passwords or tokens in the memory
 
 ## License
 
