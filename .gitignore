@@ -10,3 +10,19 @@ __pycache__/
 *.bak
 *.bak.*
 data/
+# FOX Security Hardening 05/04/2026
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+credentials.json
+credentials.yaml
+service-account*.json
+.env.*
+!.env.example
+*.db
+*.sqlite3
+*secret*
+*SECRET*
