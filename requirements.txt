@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+httpx
+python-dotenv
+pytest
+pytest-asyncio
+psycopg2-binary
+pgvector
+asyncpg
+sentence-transformers
+numpy
+pydantic

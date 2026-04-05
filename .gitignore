@@ -3,5 +3,10 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+*.db.corrupt
 .env
+.env.*
 .master_key
+*.bak
+*.bak.*
+data/
